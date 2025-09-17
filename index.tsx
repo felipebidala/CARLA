@@ -48,7 +48,7 @@ const Chatbot: React.FC = () => {
             try {
                 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY! });
                 const newChat = ai.chats.create({
-                    model: 'gemini-2.5-flash',
+                    model: 'gemini-2.5-pro',
                     config: {
                         systemInstruction: "Você é LIA (LegalizaTech Inteligência Artificial), uma assistente virtual profissional e prestativa. Sua especialidade é responder perguntas sobre os serviços da LegalizaTech, focando em Abertura de MEI, obtenção de CNPJ e Alvarás. Seja concisa, clara e amigável. Se a pergunta for complexa ou fora do escopo, oriente o usuário a preencher o formulário de contato para falar com um especialista.",
                     },
