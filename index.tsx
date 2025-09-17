@@ -77,7 +77,7 @@ const Chatbot: React.FC = () => {
 
         try {
             const response = await chat.sendMessage({ message: userMessage.text });
-            const liaMessage = { sender: 'lia' as const, text: response.text };
+            const liaMessage = { sender: 'lia' as const, text: response.text ?? 'Não foi possível obter uma resposta. Por favor, tente novamente.' };
             setMessages(prev => [...prev, liaMessage]);
         } catch (error) {
             console.error("Erro ao enviar mensagem:", error);
