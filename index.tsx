@@ -76,14 +76,20 @@ const Chatbot = () => {
     setIsLoading(true);
 
     try {
-      const response = await chatRef.current.sendMessage({ message: input });
-      const botMessage = { text: response.text, sender: 'bot' as const };
-      setMessages(prev => [...prev, botMessage]);
-    } catch (error) {
-      console.error("Erro ao enviar mensagem:", error);
-      const errorMessage = { text: 'Ocorreu um erro. Por favor, tente novamente.', sender: 'bot' as const };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
+    const response = await chatRef.current.sendMessage({ message: input });
+
+    // --- CORREÇÃO AQUI (Linha 80) ---
+    // Se 'response.text' for undefined, usamos "" (string vazia) como padrão.
+    const botMessage = { text: response.text ?? "", sender: 'bot' as const };
+
+    // (Linha 81)
+    setMessages(prev => [...prev, botMessage]);
+
+} catch (error) {
+    console.error("Erro ao enviar mensagem:", error);
+    const errorMessage = { text: 'Ocorreu um erro. Por favor, tente novamente.', sender: 'bot' as const };
+    setMessages(prev => [...prev, errorMessage]);
+} finally {
       setIsLoading(false);
     }
   };
