@@ -1,8 +1,15 @@
 import React, { useState, useRef, useEffect } from 'react';
 import ReactDOM from 'react-dom/client';
-import { GoogleGenAI, Chat } from "@google/genai";
+import { GoogleGenAI, Chat, Type } from "@google/genai";
 
 import './index.css';
+
+// --- Interface para as mensagens do chat ---
+interface Message {
+  text: string;
+  sender: 'user' | 'bot';
+  options?: string[];
+}
 
 // --- Validação e Formatação de CPF ---
 const validateCpf = (cpf: string): boolean => {
@@ -33,9 +40,11 @@ const formatCpf = (cpf: string): string => {
 
 // --- Componente Chatbot ---
 const Chatbot = () => {
-  const [messages, setMessages] = useState<{ text: string; sender: 'user' | 'bot' }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [shouldRedirect, setShouldRedirect] = useState(false);
+  const [collectedData, setCollectedData] = useState<string[]>([]);
   const chatRef = useRef<Chat | null>(null);
   const chatboxRef = useRef<HTMLUListElement>(null);
 
@@ -46,10 +55,36 @@ const Chatbot = () => {
         chatRef.current = ai.chats.create({
           model: 'gemini-2.5-flash',
           config: {
-            systemInstruction: 'Você é um assistente virtual da MB Regulariza Empresas, especializado em legalização de empresas. Seja cordial, prestativo e forneça informações claras sobre MEI, CNPJ e alvarás. Responda em português brasileiro.',
+            systemInstruction: `Seu nome é 'MB Assistente'. Você é um assistente virtual especialista da 'MB Regulariza', uma empresa de consultoria e contabilidade focada em MEI e pequenas empresas no Brasil.
+
+Seu objetivo principal é saudar o cliente, entender a necessidade dele (Abrir empresa, Regularizar, Alterar dados), fazer perguntas curtas para qualificar a situação e, em seguida, coletar Nome e WhatsApp.
+
+Regras estritas que você DEVE seguir:
+1.  **Fluxo de Coleta:**
+    *   Primeiro, qualifique a necessidade do cliente com perguntas de múltipla escolha.
+    *   Depois de entender o serviço, peça o **nome completo**.
+    *   Depois de receber o nome, peça o **número de WhatsApp com DDD**.
+    *   Após receber o número de WhatsApp, a conversa está encerrada.
+2.  **Formato da Resposta:** Siga um destes três formatos, sem exceção:
+    *   **JSON para Perguntas com Opções:** Se sua resposta for uma pergunta com opções, a resposta DEVE ser APENAS um objeto JSON válido com as chaves "response" (string) e "options" (array de strings).
+        *   Exemplo: \`{"response": "Qual o tipo de CNPJ?", "options": ["MEI", "LTDA"]}\`
+    *   **Texto Simples para Coleta de Dados:** Se sua resposta for uma pergunta aberta para coletar dados (como nome ou WhatsApp), a resposta DEVE ser texto simples.
+        *   Exemplo: "Entendido. Para continuar, por favor, me informe seu nome completo."
+    *   **JSON para Finalização:** Ao receber o número do WhatsApp do cliente, sua resposta final DEVE ser APENAS um objeto JSON válido com as chaves "finalMessage" (string) e "redirectToWhatsApp" (boolean \`true\`).
+        *   Exemplo: \`{"finalMessage": "Perfeito! Seus dados foram registrados. Você será redirecionado para o nosso WhatsApp para finalizar.", "redirectToWhatsApp": true}\`
+3.  **Proibido Aconselhar:** NUNCA forneça conselhos contábeis, financeiros ou legais.
+4.  **Proibido Inventar:** NUNCA invente preços, custos ou prazos. Se perguntado, use a resposta padrão.
+5.  **Foco na Coleta:** Seu objetivo é SEMPRE seguir o fluxo para coletar as informações e finalizar a conversa para o redirecionamento.
+6.  **Resposta Padrão para Preços/Prazos:** Se o cliente perguntar algo que você não sabe (ex: 'quanto custa?'), responda EXATAMENTE com: 'Para te passar um valor preciso, um de nossos especialistas precisa analisar seu caso em detalhes. Posso pegar seu nome e WhatsApp para que ele entre em contato sem compromisso?' (responda em texto simples, não JSON).
+7.  **Brevidade:** Mantenha suas respostas curtas e diretas.
+8.  **Idioma:** Responda sempre em português brasileiro.`,
           },
         });
-        setMessages([{ text: 'Olá! Como posso ajudar você a legalizar seu negócio hoje?', sender: 'bot' }]);
+        setMessages([{ 
+            text: 'Olá! Eu sou o MB Assistente. Como posso ajudar você hoje?', 
+            sender: 'bot',
+            options: ['Abrir uma empresa', 'Regularizar', 'Alterar dados']
+        }]);
       } catch (error) {
         console.error("Erro ao inicializar o chatbot:", error);
         setMessages([{ text: 'Desculpe, não consigo me conectar no momento. Tente mais tarde.', sender: 'bot' }]);
@@ -65,34 +100,89 @@ const Chatbot = () => {
     }
   }, [messages]);
 
+  useEffect(() => {
+    if (shouldRedirect) {
+      // Small delay for user to read the message.
+      const timer = setTimeout(() => {
+        const companyWhatsApp = "5531982318463";
+        const userConversation = collectedData
+          .map(item => `- ${item}`)
+          .join('\n');
 
-  const handleSendMessage = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!input.trim() || !chatRef.current || isLoading) return;
+        const prefilledMessage = `Olá, MB Regulariza! Gostaria de um atendimento.\n\n*Resumo da Solicitação:*\n${userConversation}`;
+        const whatsappUrl = `https://wa.me/${companyWhatsApp}?text=${encodeURIComponent(prefilledMessage)}`;
+        window.open(whatsappUrl, '_blank');
+        setShouldRedirect(false); // Reset state
+        setCollectedData([]); // Reset collected data for the next chat
+      }, 2000);
 
-    const userMessage = { text: input, sender: 'user' as const };
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
+      return () => clearTimeout(timer); // Cleanup timer on unmount
+    }
+  }, [shouldRedirect, collectedData]);
+
+  const sendMessageToBot = async (messageText: string) => {
+    if (!chatRef.current) return;
     setIsLoading(true);
-
     try {
-    const response = await chatRef.current.sendMessage({ message: input });
+      const response = await chatRef.current.sendMessage({ message: messageText });
+      let botMessage: Message;
 
-    // --- CORREÇÃO AQUI (Linha 80) ---
-    // Se 'response.text' for undefined, usamos "" (string vazia) como padrão.
-    const botMessage = { text: response.text ?? "", sender: 'bot' as const };
-
-    // (Linha 81)
-    setMessages(prev => [...prev, botMessage]);
-
-} catch (error) {
-    console.error("Erro ao enviar mensagem:", error);
-    const errorMessage = { text: 'Ocorreu um erro. Por favor, tente novamente.', sender: 'bot' as const };
-    setMessages(prev => [...prev, errorMessage]);
-} finally {
+      try {
+        const parsedData = JSON.parse(response.text ?? '{}');
+        
+        if (parsedData.redirectToWhatsApp === true) {
+            botMessage = {
+                text: parsedData.finalMessage || "Obrigado! Estamos te redirecionando para o nosso WhatsApp.",
+                sender: 'bot'
+            };
+            setMessages(prev => [...prev, botMessage]);
+            setShouldRedirect(true);
+        } else {
+             botMessage = {
+              text: parsedData.response || "Desculpe, não entendi.",
+              sender: 'bot',
+              options: parsedData.options || undefined
+            };
+            setMessages(prev => [...prev, botMessage]);
+        }
+      } catch (e) {
+        botMessage = {
+          text: response.text ?? "Desculpe, não entendi.",
+          sender: 'bot'
+        };
+        setMessages(prev => [...prev, botMessage]);
+      }
+    } catch (error) {
+      console.error("Erro ao enviar mensagem:", error);
+      const errorMessage = { text: 'Ocorreu um erro. Por favor, tente novamente.', sender: 'bot' as const };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
       setIsLoading(false);
     }
   };
+
+  const handleSendMessage = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmedInput = input.trim();
+    if (!trimmedInput || isLoading) return;
+
+    const userMessage = { text: trimmedInput, sender: 'user' as const };
+    setMessages(prev => [...prev, userMessage]);
+    setCollectedData(prev => [...prev, trimmedInput]);
+    setInput('');
+    await sendMessageToBot(trimmedInput);
+  };
+
+  const handleOptionClick = async (optionText: string) => {
+    if (isLoading) return;
+    const userMessage = { text: optionText, sender: 'user' as const };
+    setMessages(prev => [...prev, userMessage]);
+    setCollectedData(prev => [...prev, optionText]);
+    await sendMessageToBot(optionText);
+  };
+
+  const lastMessage = messages[messages.length - 1];
+  const isAwaitingOption = lastMessage?.sender === 'bot' && !!lastMessage.options;
 
   return (
     <div className="chatbot">
@@ -103,14 +193,25 @@ const Chatbot = () => {
         {messages.map((msg, index) => (
           <li key={index} className={`chat ${msg.sender === 'user' ? 'outgoing' : 'incoming'}`}>
              {msg.sender === 'bot' && <span className="material-symbols-outlined">smart_toy</span>}
-            <p>{msg.text}</p>
+            <div>
+                <p>{msg.text}</p>
+                {msg.sender === 'bot' && msg.options && index === messages.length - 1 && (
+                    <div className="quick-reply-options">
+                        {msg.options.map((option, i) => (
+                            <button key={i} className="quick-reply-button" onClick={() => handleOptionClick(option)}>
+                                {option}
+                            </button>
+                        ))}
+                    </div>
+                )}
+            </div>
           </li>
         ))}
          {isLoading && <li className="chat incoming"><span className="material-symbols-outlined">smart_toy</span><p>Digitando...</p></li>}
       </ul>
       <form className="chat-input" onSubmit={handleSendMessage}>
         <textarea 
-          placeholder="Digite sua dúvida..." 
+          placeholder={isAwaitingOption ? "Escolha uma opção acima..." : "Digite sua dúvida..."}
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
@@ -119,9 +220,10 @@ const Chatbot = () => {
               handleSendMessage(e);
             }
           }}
+          disabled={isAwaitingOption}
           required 
         />
-        <button id="send-btn" type="submit" className="material-symbols-outlined">send</button>
+        <button id="send-btn" type="submit" className="material-symbols-outlined" disabled={isAwaitingOption}>send</button>
       </form>
     </div>
   );
